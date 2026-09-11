@@ -1,0 +1,14 @@
+{
+  "name": "herdr-tasks",
+  "version": "0.1.0",
+  "description": "A Herdr plugin: watch an agent work through its task list in a split pane.",
+  "license": "Apache-2.0",
+  "private": true,
+  "author": "Pink Pixel (https://pinkpixel.dev)",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "check": "node tools/check.js"
+  }
+}

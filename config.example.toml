@@ -1,0 +1,54 @@
+# herdr-tasks configuration
+# =============================================================================
+#
+# HOW TO USE THIS FILE
+#
+#   Copied to <plugin config dir>/config.toml by the "Set up" action, and read
+#   by the pane each time it opens. Uncomment a key to change it; leave it
+#   commented to keep the default.
+#
+#   Find this file with:  herdr plugin config-dir pinkpixel.herdr-tasks
+
+# --- The pane ----------------------------------------------------------------
+
+# Heading shown at the top of the pane when no list has named itself. Default:
+#title = "Tasks"
+
+# Take focus when the pane opens. The default leaves focus in the agent pane so
+# you can keep typing; the pane is read-only, so there is little reason to be in
+# it unless you want to scroll a long list. Default:
+#focus_on_open = false
+
+# Keep completed tasks visible. Turn this off for a list that only shows what is
+# left to do. Default:
+#show_completed = true
+
+# Draw the filled/unfilled progress bar under the heading. With this off the
+# heading gets a plain rule instead; the x/y count in the corner stays either
+# way. Default:
+#show_progress_bar = true
+
+# Scroll a long list so the in-progress task stays on screen. With this off the
+# list stays where you left it and `j`/`k` are the only way to move. Default:
+#follow_active = true
+
+# --- Glyphs ------------------------------------------------------------------
+#
+# One per task state. Any string works, so a Nerd Font icon or a plain ASCII
+# marker is as valid as the defaults. Keep them to one cell wide if you can:
+# a wider glyph shifts that row's text by a column.
+#[icons]
+#pending = "○"
+#in_progress = "▸"
+#completed = "✔"
+#blocked = "⊘"
+
+# --- Colours -----------------------------------------------------------------
+#
+# Hex, applied as 24-bit colour. `accent` paints the heading, the in-progress
+# task and the progress bar; pending tasks deliberately use your terminal's own
+# foreground colour, so the list inherits your theme.
+#[colors]
+#accent = "#7dd3fc"
+#done = "#71717a"
+#blocked = "#f87171"
