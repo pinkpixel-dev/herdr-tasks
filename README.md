@@ -99,7 +99,7 @@ Press the key in the pane running your agent. The task list opens to the right a
 
 It is an ordinary Herdr pane, so resizing, moving, zooming, and swapping all work with your normal Herdr keys.
 
-Inside the pane:
+The pane scrolls itself. A list longer than the pane follows the in-progress task, so the current step stays on screen without you touching anything. The keys below matter only for a list that does not fit, and the footer hides them when it does:
 
 | Key | Does |
 |---|---|
@@ -107,6 +107,8 @@ Inside the pane:
 | `j` / `k` | scroll down / up |
 | `g` / `G` | jump to the top / bottom |
 | `f` | go back to following the in-progress task |
+
+Turn the automatic scrolling off with `follow_active = false` if you would rather the list stayed where you left it.
 
 One list per agent pane. The pane is tied to whichever pane was focused when you pressed the key, so two agents in the same tab each get their own list and their own pane.
 

@@ -169,6 +169,26 @@ test('render fits the frame and keeps the active task on screen', () => {
   assert.ok(out.lines[0].includes('30/40'), 'the tally counts completed tasks');
 });
 
+test('render offers the scroll keys only when the list does not fit', () => {
+  const short = Array.from({ length: 4 }, (_, i) => ({ id: String(i + 1), text: `t${i}`, status: 'pending' }));
+  const long = Array.from({ length: 60 }, (_, i) => ({ id: String(i + 1), text: `t${i}`, status: 'pending' }));
+  const frame = { columns: 40, rows: 14 };
+
+  const fits = render.render({ ...store.empty('w1:p1'), tasks: short }, frame, config.DEFAULTS);
+  assert.equal(fits.maxOffset, 0);
+  assert.match(fits.lines.at(-1), /q quit/);
+  assert.doesNotMatch(fits.lines.at(-1), /scroll/, 'a list that fits still advertises scrolling');
+
+  const overflows = render.render({ ...store.empty('w1:p1'), tasks: long }, frame, config.DEFAULTS);
+  assert.ok(overflows.maxOffset > 0);
+  assert.match(overflows.lines.at(-1), /j\/k scroll/);
+  assert.doesNotMatch(overflows.lines.at(-1), /f follow/, 'follow is offered before the view is pinned');
+
+  const pinned = render.render({ ...store.empty('w1:p1'), tasks: long }, frame, config.DEFAULTS, { offset: 5 });
+  assert.match(pinned.lines.at(-1), /f follow/);
+  assert.equal(pinned.lines.length, 14, 'the footer text must not change the frame height');
+});
+
 test('render says so when there are no tasks yet', () => {
   const out = render.render(store.empty('w1:p1'), { columns: 40, rows: 10 }, config.DEFAULTS);
   assert.match(out.lines.join('\n'), /Waiting for the agent/);
