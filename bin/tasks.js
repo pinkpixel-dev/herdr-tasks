@@ -11,7 +11,8 @@
 //   tasks set "first" "second" "third"    replace the list
 //   tasks set -                           ... reading one task per line from stdin
 //   tasks add "another"                   append
-//   tasks start 2                         mark in progress (clears any other)
+//   tasks sub 2 "a step inside task 2"    append a subtask
+//   tasks start 2.1                       mark in progress (clears any other)
 //   tasks done 2 3                        mark complete
 //   tasks block 4 "waiting on review"     mark blocked, with a reason
 //   tasks reset 4                         back to pending
@@ -19,8 +20,9 @@
 //   tasks show                            print the list
 //   tasks clear                           forget the list
 //
-// Task numbers are the positions `show` prints. `--pane <id>` targets another
-// pane; `--title <text>` names the list in the pane header.
+// A task is addressed by the number `show` prints, a subtask by `parent.child`.
+// `--pane <id>` targets another pane; `--title <text>` names the list in the
+// pane header.
 
 const fs = require('node:fs');
 
@@ -57,57 +59,132 @@ function parse(argv) {
   return { flags, rest };
 }
 
-function format(record) {
-  if (!record.tasks.length) return 'no tasks';
-  return record.tasks
-    .map((task, i) => {
-      const note = task.note ? `  (${task.note})` : '';
-      return `${String(i + 1).padStart(2, ' ')} ${ICONS[task.status]} ${task.text}${note}`;
-    })
-    .join('\n');
+function row(address, task, indent) {
+  const note = task.note ? `  (${task.note})` : '';
+  return `${indent}${address.padStart(2, ' ')} ${ICONS[task.status]} ${task.text}${note}`;
 }
 
-// Accepts 1-based positions, `all`, and a bare text match, because an agent is
-// as likely to name a task as to count it.
-function indexesFor(record, args) {
+function format(record) {
+  if (!record.tasks.length) return 'no tasks';
+  const lines = [];
+  record.tasks.forEach((task, i) => {
+    lines.push(row(String(i + 1), task, ''));
+    (task.subtasks || []).forEach((sub, j) => lines.push(row(`${i + 1}.${j + 1}`, sub, '  ')));
+  });
+  return lines.join('\n');
+}
+
+// Every addressable task, in the order `show` prints them. A reference carries
+// the task itself, so a caller changes it in place, and its parent, because the
+// rules for one task in progress apply within a parent as well as across the
+// list.
+function references(record) {
+  const refs = [];
+  record.tasks.forEach((task, i) => {
+    refs.push({ address: String(i + 1), parent: null, task });
+    (task.subtasks || []).forEach((sub, j) => {
+      refs.push({ address: `${i + 1}.${j + 1}`, parent: task, task: sub });
+    });
+  });
+  return refs;
+}
+
+// Accepts an address (`2`, `2.1`), `all`, and a bare text match, because an
+// agent is as likely to name a task as to count it.
+function resolve(record, args) {
   if (!args.length) return [];
-  if (args.length === 1 && args[0] === 'all') return record.tasks.map((_, i) => i);
+  const refs = references(record);
+  if (args.length === 1 && args[0] === 'all') return refs;
   const found = [];
   for (const arg of args) {
-    const n = Number(arg);
-    if (Number.isInteger(n) && n >= 1 && n <= record.tasks.length) {
-      found.push(n - 1);
+    const wanted = String(arg).trim();
+    const exact = refs.find((ref) => ref.address === wanted);
+    if (exact) {
+      found.push(exact);
       continue;
     }
-    const needle = String(arg).toLowerCase();
-    const match = record.tasks.findIndex((t) => t.text.toLowerCase().includes(needle));
-    if (match < 0) fail(`no task matching "${arg}"`);
+    const needle = wanted.toLowerCase();
+    const match = refs.find((ref) => ref.task.text.toLowerCase().includes(needle));
+    if (!match) fail(`no task matching "${arg}"`);
     found.push(match);
   }
   return found;
 }
 
+// An indented line is a subtask of the line above it, which is how both a
+// markdown list and a hand-typed plan already read.
 function readLines(values) {
-  if (values.length === 1 && values[0] === '-') {
-    return fs
-      .readFileSync(0, 'utf8')
-      .split('\n')
-      .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, '').trim())
-      .filter(Boolean);
-  }
-  return values.map((v) => v.trim()).filter(Boolean);
+  const raw = values.length === 1 && values[0] === '-' ? fs.readFileSync(0, 'utf8').split('\n') : values;
+  return raw
+    .map((value) => {
+      const line = String(value).replace(/\t/g, '  ');
+      const depth = /^ */.exec(line)[0].length >= 2 ? 1 : 0;
+      return { depth, text: line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, '').trim() };
+    })
+    .filter((line) => line.text);
 }
 
-function setStatus(record, indexes, status, note) {
-  if (status === 'in_progress') {
-    record.tasks.forEach((task) => {
-      if (task.status === 'in_progress') task.status = 'pending';
-    });
+// A flat list of texts, for the commands that cannot nest.
+function flatLines(values) {
+  return readLines(values).map((line) => line.text);
+}
+
+// Turn parsed lines into tasks, hanging each indented line off the last
+// top-level one. An indented first line has nothing to hang off, so it stands
+// on its own.
+function nest(lines) {
+  const tasks = [];
+  for (const line of lines) {
+    if (line.depth && tasks.length) {
+      const parent = tasks[tasks.length - 1];
+      parent.subtasks = (parent.subtasks || []).concat({ text: line.text, status: 'pending' });
+    } else {
+      tasks.push({ text: line.text, status: 'pending' });
+    }
   }
-  for (const i of indexes) {
-    record.tasks[i].status = status;
-    if (note) record.tasks[i].note = note;
-    else delete record.tasks[i].note;
+  return tasks;
+}
+
+function demote(task) {
+  if (task.status === 'in_progress') task.status = 'pending';
+  (task.subtasks || []).forEach((sub) => {
+    if (sub.status === 'in_progress') sub.status = 'pending';
+  });
+}
+
+// One task in progress per level. Starting a subtask also puts its parent in
+// progress, so the pane shows both which step you are on and what you are doing
+// inside it.
+function start(record, ref) {
+  const siblings = ref.parent ? ref.parent.subtasks : record.tasks;
+  siblings.forEach((task) => {
+    if (task !== ref.task) demote(task);
+  });
+  if (ref.parent) {
+    record.tasks.forEach((task) => {
+      if (task !== ref.parent) demote(task);
+    });
+    ref.parent.status = 'in_progress';
+  }
+  ref.task.status = 'in_progress';
+}
+
+// Completing a task completes what is left inside it: a step is not half done
+// once you have called it finished.
+function complete(task) {
+  task.status = 'completed';
+  (task.subtasks || []).forEach((sub) => {
+    if (sub.status !== 'blocked') sub.status = 'completed';
+  });
+}
+
+function setStatus(record, refs, status, note) {
+  for (const ref of refs) {
+    if (status === 'in_progress') start(record, ref);
+    else if (status === 'completed') complete(ref.task);
+    else ref.task.status = status;
+    if (note) ref.task.note = note;
+    else delete ref.task.note;
   }
   return record;
 }
@@ -126,31 +203,36 @@ const stamp = (record) => ({
 let record;
 switch (command) {
   case 'set': {
-    const texts = readLines(rest);
-    if (!texts.length) fail('set needs at least one task, or `-` to read them from stdin');
+    const lines = readLines(rest);
+    if (!lines.length) fail('set needs at least one task, or `-` to read them from stdin');
+    record = store.update(paneId, (current) => stamp({ ...current, tasks: nest(lines) }), process.argv);
+    break;
+  }
+  case 'add': {
+    const lines = readLines(rest);
+    if (!lines.length) fail('add needs at least one task');
     record = store.update(
       paneId,
-      (current) =>
-        stamp({
-          ...current,
-          tasks: texts.map((text, i) => ({ id: String(i + 1), text, status: 'pending' })),
-        }),
+      (current) => stamp({ ...current, tasks: current.tasks.concat(nest(lines)) }),
       process.argv,
     );
     break;
   }
-  case 'add': {
-    const texts = readLines(rest);
-    if (!texts.length) fail('add needs at least one task');
+  case 'sub': {
+    const [address, ...texts] = rest;
+    if (!address) fail('sub needs the task to add to, then the subtask text');
+    const lines = flatLines(texts);
+    if (!lines.length) fail('sub needs at least one subtask, or `-` to read them from stdin');
     record = store.update(
       paneId,
-      (current) =>
-        stamp({
-          ...current,
-          tasks: current.tasks.concat(
-            texts.map((text, i) => ({ id: String(current.tasks.length + i + 1), text, status: 'pending' })),
-          ),
-        }),
+      (current) => {
+        const [ref] = resolve(current, [address]);
+        if (ref.parent) fail(`"${ref.address}" is already a subtask: subtasks are only one level deep`);
+        ref.task.subtasks = (ref.task.subtasks || []).concat(
+          lines.map((text) => ({ text, status: 'pending' })),
+        );
+        return stamp(current);
+      },
       process.argv,
     );
     break;
@@ -164,9 +246,9 @@ switch (command) {
     record = store.update(
       paneId,
       (current) => {
-        const indexes = indexesFor(current, command === 'block' ? rest.slice(0, 1) : rest);
-        if (!indexes.length) fail(`${command} needs a task number or text`);
-        return stamp(setStatus(current, indexes, status, note));
+        const refs = resolve(current, command === 'block' ? rest.slice(0, 1) : rest);
+        if (!refs.length) fail(`${command} needs a task number or text`);
+        return stamp(setStatus(current, refs, status, note));
       },
       process.argv,
     );
@@ -176,10 +258,25 @@ switch (command) {
     record = store.update(
       paneId,
       (current) => {
-        const active = current.tasks.findIndex((t) => t.status === 'in_progress');
-        if (active >= 0) current.tasks[active].status = 'completed';
-        const next = current.tasks.findIndex((t) => t.status === 'pending');
-        if (next >= 0) current.tasks[next].status = 'in_progress';
+        // Work through the subtasks of the active task before leaving it, so
+        // one command walks the whole list from top to bottom.
+        const active = current.tasks.find((t) => t.status === 'in_progress');
+        if (active && active.subtasks) {
+          const sub = active.subtasks.find((t) => t.status === 'in_progress');
+          if (sub) sub.status = 'completed';
+          const nextSub = active.subtasks.find((t) => t.status === 'pending');
+          if (nextSub) {
+            nextSub.status = 'in_progress';
+            return stamp(current);
+          }
+        }
+        if (active) complete(active);
+        const next = current.tasks.find((t) => t.status === 'pending');
+        if (next) {
+          next.status = 'in_progress';
+          const firstSub = (next.subtasks || []).find((t) => t.status === 'pending');
+          if (firstSub) firstSub.status = 'in_progress';
+        }
         return stamp(current);
       },
       process.argv,
@@ -195,7 +292,7 @@ switch (command) {
     record = store.read(paneId, process.argv);
     break;
   default:
-    fail(`unknown command "${command}" (set, add, start, done, block, reset, next, show, clear)`);
+    fail(`unknown command "${command}" (set, add, sub, start, done, block, reset, next, show, clear)`);
 }
 
 process.stdout.write(`${format(record)}\n`);

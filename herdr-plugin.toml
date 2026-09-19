@@ -2,16 +2,20 @@
 #
 # A task list for the agent you are watching, in a split pane beside it.
 #
-# Two writers, one reader. Claude Code writes through a PostToolUse hook on its
-# own TodoWrite tool, so its existing todo list is mirrored with nothing for the
-# agent to learn. Every other agent writes through the `herdr-tasks` CLI, which the
-# bundled skill teaches it to use. Both land in the same per-pane JSON file under
-# the plugin's state directory, and the pane watches that directory.
+# One writer, one reader. An agent publishes its list with the `herdr-tasks` CLI,
+# which the bundled skill teaches it to use, and that lands in a per-pane JSON file
+# under the plugin's state directory. The pane watches that directory.
 #
-# Nothing here runs on its own. The pane opens only from the toggle action (bind
-# it to a key), and the Claude Code hook is only written when the setup action is
-# invoked. The one [[startup]] entry re-points an ALREADY installed hook at the
-# current checkout after a reinstall, and does nothing otherwise.
+# An earlier design mirrored Claude Code's TodoWrite tool through a PostToolUse
+# hook, which needed nothing from the agent. It was removed: TodoWrite is disabled
+# by default in current Claude Code, replaced by TaskCreate/TaskGet/TaskList/
+# TaskUpdate, and a session with no task tool at all emits nothing to hook. The CLI
+# works for every agent, so it is the only path.
+#
+# Nothing here runs on its own. The pane opens only from the toggle action (bind it
+# to a key), and the skill and shim are only written when the setup action is
+# invoked. The one [[startup]] entry re-points an ALREADY installed shim and skill
+# at the current checkout after a reinstall, and does nothing otherwise.
 #
 # Node, no dependencies: Herdr plugins run as ordinary processes, and a task list
 # does not justify a toolchain. Requires Node 18 or newer, which is also what
@@ -19,7 +23,7 @@
 
 id = "pinkpixel.herdr-tasks"
 name = "Herdr Tasks"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.9.0"
 description = "Watch an agent work through its task list in a split pane, checked off as it goes."
 platforms = ["linux", "macos", "windows"]
@@ -43,26 +47,25 @@ description = "Open the task list beside the focused pane, or close it if it is 
 contexts = ["pane"]
 command = ["node", "bin/toggle.js"]
 
-# Writes outside the plugin's own directories: Claude Code's user settings, the
-# user's skill directories, and a shim in the plugin config directory. Explicit
-# action, never automatic.
+# Writes outside the plugin's own directories: the user's skill directories, and a
+# shim in the plugin config directory. Explicit action, never automatic.
 [[actions]]
 id = "configure"
-title = "Set up: install the Claude Code hook, the skill and the CLI shim"
-description = "Add a PostToolUse hook on TodoWrite to Claude Code's user settings, install the herdr-tasks skill for other agents, write the CLI shim, and seed config.toml. Prints the keybinding to add."
+title = "Set up: install the agent skill and the CLI shim"
+description = "Install the herdr-tasks skill so your agents know how to publish a task list, write the CLI shim, and seed config.toml. Prints the keybinding to add."
 contexts = ["global"]
 command = ["node", "bin/configure.js", "--apply"]
 
 [[actions]]
 id = "unconfigure"
-title = "Set up: remove the Claude Code hook, the skill and the CLI shim"
-description = "Take the TodoWrite hook back out of Claude Code's settings, remove the skill this plugin installed, and delete the shim. Your config.toml and saved lists stay."
+title = "Set up: remove the agent skill and the CLI shim"
+description = "Remove the skill this plugin installed and delete the shim. Your config.toml and saved lists stay."
 contexts = ["global"]
 command = ["node", "bin/configure.js", "--uninstall"]
 
 # A reinstall lands the plugin in a new managed directory, which leaves the
-# absolute path inside Claude Code's settings pointing at the old one. This fixes
-# that path and refreshes the installed skill on the next server start, and exits
-# quietly when nothing was installed.
+# absolute paths inside the installed skill and shim pointing at the old one. This
+# refreshes both on the next server start, and exits quietly when nothing is
+# installed.
 [[startup]]
 command = ["node", "bin/configure.js", "--repair"]

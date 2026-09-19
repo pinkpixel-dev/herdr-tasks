@@ -1,6 +1,6 @@
 {
   "name": "herdr-tasks",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Herdr plugin: watch an agent work through its task list in a split pane.",
   "license": "Apache-2.0",
   "private": true,

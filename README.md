@@ -2,7 +2,7 @@
 
 A Herdr plugin that shows the task list of the agent you are watching, in a split pane beside it, with items checked off as the agent finishes them.
 
-Agents already plan their work. Claude Code keeps a todo list, and most other agents will write one if you ask. The problem is that the list scrolls away inside the conversation, so following along means reading every line of output to figure out where the agent is. This puts the list somewhere it stays put.
+Agents already plan their work, and most will write the plan down if you ask. The problem is that the list scrolls away inside the conversation, so following along means reading every line of output to work out where the agent is. This puts the list somewhere it stays put.
 
 Press one key, the list appears next to the agent. Press it again, the list goes away.
 
@@ -13,7 +13,10 @@ Tasks  claude · w6:p4                           2/6
  1 ✔  Read the Herdr plugin skill references
  2 ✔  Inspect the file viewer plugin for the toggle pattern
  3 ▸  Writing the manifest, pane renderer and toggle launcher
- 4 ○  Wire the Claude Code TodoWrite hook
+      ✔ the manifest
+      ▸ the pane renderer
+      ○ the toggle launcher
+ 4 ○  Wire the agent skill into setup
  5 ⊘  Waiting on review
       ↳ blocked on the API key
  6 ○  Write the README
@@ -21,21 +24,22 @@ Tasks  claude · w6:p4                           2/6
 q quit · j/k scroll · g top
 ```
 
+A step that breaks into pieces can carry subtasks, one level deep, like task 3 above. The count in
+the header stays on tasks, so a step with six subtasks is still one step of six.
+
 ## How it gets the tasks
 
-Two ways in, one pane.
+The agent publishes its own list. Claude Code, Codex, Gemini, something you wrote yourself: anything that can run a shell command drives the pane with `herdr-tasks set`, `herdr-tasks done 2`, and a few others. Setup installs a skill that teaches them how, so usually there is nothing to explain.
 
-**Claude Code needs no changes at all.** The setup action adds a hook to Claude Code's settings that fires whenever Claude writes its own todo list. Claude keeps working exactly as it always has, and the pane follows along. Nothing to tell the agent, nothing for it to remember, no extra tool calls.
+The CLI writes a small JSON file per pane. The pane watches that file, so an update shows up the moment it lands.
 
-**Any other agent uses the CLI.** Codex, Gemini, an agent you wrote yourself: anything that can run a shell command can drive the list with `herdr-tasks set`, `herdr-tasks done 2`, and a few others. Setup installs a skill that teaches them how, so usually there is nothing to explain.
-
-Both write a small JSON file per pane. The pane watches that file, so an update shows up the moment it lands.
+An earlier version of this plugin mirrored Claude Code's own todo list through a `PostToolUse` hook on `TodoWrite`, which needed nothing at all from the agent. That is gone. `TodoWrite` is disabled by default in current Claude Code, replaced by `TaskCreate`, `TaskGet`, `TaskList` and `TaskUpdate`, and a session with none of those enabled emits nothing to hook. The CLI works the same way in every agent, so it is the only path now.
 
 ## Requirements
 
 - Herdr 0.9.0 or newer
 - Node 18 or newer, which you already have if you run Claude Code
-- Claude Code, only for the automatic path
+- An agent that can run a shell command, which is all of them
 
 No dependencies to install. The whole plugin is plain Node scripts.
 
@@ -55,25 +59,20 @@ herdr plugin link /path/to/herdr-tasks
 
 Installing registers the plugin. Two more things are needed, and both write outside the plugin, so neither happens on its own.
 
-**1. Run the setup action.** It adds the Claude Code hook, installs the agent skill, writes the CLI shim, and seeds the config file.
+**1. Run the setup action.** It installs the agent skill, writes the CLI shim, and seeds the config file.
 
 ```bash
 herdr plugin action invoke pinkpixel.herdr-tasks.configure
 ```
 
-It prints every path it wrote and the keybinding block from the next step. Your Claude Code settings are merged, not replaced, and the previous file is copied to `settings.json.herdr-tasks.bak` first.
-
-Three things land outside the plugin:
+It prints every path it wrote and the keybinding block from the next step. Two things land outside the plugin:
 
 | What | Where |
 |---|---|
-| the `TodoWrite` hook | `~/.claude/settings.json`, merged |
 | the `herdr-tasks` skill | `~/.claude/skills/` and `~/.agents/skills/`, whichever exist |
 | the `herdr-tasks` command | the plugin config directory |
 
 The skill is written with the real path of the command filled in, and marked with a `.installed-by-herdr-tasks` file. An unmarked `herdr-tasks` skill directory is left alone, so a skill you wrote yourself is safe. The one exception is a `SKILL.md` that is byte-identical to the plugin's own template, which means a sync tool or a manual copy put it there with the path placeholder still in it. That copy gets finished and marked, because an agent reading it would otherwise find a placeholder instead of a command.
-
-Restart Claude Code, or start a new session, before the hook loads.
 
 **2. Bind the pane to a key.** Add this to `~/.config/herdr/config.toml`:
 
@@ -112,7 +111,19 @@ Turn the automatic scrolling off with `follow_active = false` if you would rathe
 
 One list per agent pane. The pane is tied to whichever pane was focused when you pressed the key, so two agents in the same tab each get their own list and their own pane.
 
-## Driving it from an agent that is not Claude Code
+## Asking for a list
+
+Most of the time the agent decides. The skill tells it to publish a list once the work has three or more steps, so a substantial task usually fills the pane on its own.
+
+When you want one and did not get one, ask for it directly. In Claude Code the skill is a slash command, so you can put it in front of your actual request:
+
+```
+/herdr-tasks refactor the auth module and update the tests
+```
+
+Other agents take it in plain words: tell them to use the herdr-tasks skill, and they will read it and publish as they go.
+
+## Driving it from an agent
 
 The setup action writes a `herdr-tasks` command into the plugin's config directory. Find it with:
 
@@ -130,11 +141,27 @@ herdr-tasks done parser                  # ... or name it instead of counting
 herdr-tasks next                         # complete the active task, start the next one
 herdr-tasks block 3 "waiting on the API key"
 herdr-tasks add "fix the thing I broke"
+herdr-tasks sub 2 "the tokenizer" "the grammar rules"
+herdr-tasks start 2.2                    # a subtask, by parent.child
 herdr-tasks show
 herdr-tasks clear
 ```
 
-Every command prints the list back, which is also how the agent reads its own state. Tasks are numbered by position, and a text argument matches the first task containing it.
+Every command prints the list back, which is also how the agent reads its own state. Tasks are numbered by position, a subtask is `parent.child`, and a text argument matches the first task or subtask containing it.
+
+Subtasks can also go in with the plan. An indented line in `set` hangs off the line above it, so a markdown list pasted on stdin keeps its shape:
+
+```bash
+herdr-tasks set - <<'EOF'
+- read the spec
+- write the parser
+  - the tokenizer
+  - the grammar rules
+- add tests
+EOF
+```
+
+Starting a subtask starts its parent too, and `next` works through a task's subtasks before it moves on. Completing a task completes whatever is left inside it.
 
 Setup installs [the skill](skills/herdr-tasks/SKILL.md) that explains all of this to an agent, with the real command path filled in, so an agent that reads `~/.agents/skills` or `~/.claude/skills` can find it on its own. For an agent that reads neither, point at the same file from the project's `AGENTS.md`:
 
@@ -169,7 +196,7 @@ herdr plugin action invoke pinkpixel.herdr-tasks.unconfigure
 herdr plugin uninstall pinkpixel.herdr-tasks
 ```
 
-The first takes the hook back out of Claude Code's settings, removes the skill it installed, and deletes the shim. Your `config.toml` and any saved lists stay where they are, so reinstalling picks up where you left off. Delete the config and state directories by hand if you want them gone.
+The first removes the skill it installed and deletes the shim. Your `config.toml` and any saved lists stay where they are, so reinstalling picks up where you left off. Delete the config and state directories by hand if you want them gone.
 
 ## How it works
 
@@ -178,8 +205,7 @@ herdr-plugin.toml      the manifest: one pane, three actions, one startup hook
 bin/
   pane.js              the pane: watches the state directory, draws the list
   toggle.js            the key: open a split, or close the one in this tab
-  tasks.js             the CLI other agents call
-  hook.js              the Claude Code PostToolUse bridge
+  tasks.js             the CLI your agents call
   configure.js         setup and teardown, the only thing that writes outside
 lib/
   store.js             one JSON file per pane, written atomically
@@ -187,7 +213,7 @@ lib/
   config.js            config.toml, with a small TOML reader
   paths.js             where state, config and the Herdr binary live
 skills/
-  herdr-tasks/SKILL.md the instructions setup installs for other agents
+  herdr-tasks/SKILL.md the instructions setup installs for your agents
 ```
 
 The pane finds its agent through `HERDR_TASKS_TARGET`, which the toggle passes when it opens the split. Without it the pane falls back to whichever pane Herdr reports as focused.
@@ -204,12 +230,12 @@ node tools/check.js
 herdr plugin log list --plugin pinkpixel.herdr-tasks --limit 20
 ```
 
-`plugin link` does not run build commands, but there is nothing to build here. The checks cover the store, the CLI, the renderer, the config reader, and the Claude Code payload mapping, all against a temporary state directory.
+`plugin link` does not run build commands, but there is nothing to build here. The checks cover the store, the CLI, the renderer, the config reader, and what setup writes, all against a temporary state directory and a fake home.
 
 ## Known limitations
 
-- The automatic path is Claude Code only. Other agents work through the CLI, and whether they use it depends on them reading the skill or your `AGENTS.md`.
-- The Claude Code hook needs `HERDR_PANE_ID` in the agent's environment, which means the agent has to be running in a Herdr pane. Claude Code started outside Herdr writes nothing.
+- Nothing is automatic. Whether a list appears depends on the agent reading the skill, or your `AGENTS.md`, and actually calling the CLI.
+- The CLI needs `HERDR_PANE_ID` in the agent's environment, so the agent has to be running in a Herdr pane. An agent started outside Herdr needs `--pane`.
 - Tested on Linux. The code avoids anything platform-specific and ships a Windows shim, but macOS and Windows have not been exercised yet.
 - The pane is read-only. You cannot check something off yourself from inside it, although `herdr-tasks done 2` from any shell works.
 - One task list per pane, not per agent session. A pane that closes loses its list.

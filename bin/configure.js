@@ -3,33 +3,25 @@
 
 // Setup and teardown, run as a plugin action so it only happens when asked.
 //
-// Three things live here, and each one writes somewhere the plugin does not own,
-// which is exactly why none of them happen automatically:
+// Two things live here, and both write somewhere the plugin does not own, which
+// is why neither happens automatically:
 //
-//   1. config.toml is seeded into HERDR_PLUGIN_CONFIG_DIR (never overwritten).
-//   2. A `herdr-tasks` shim is written into that same directory, with this
-//      checkout's paths baked in. The config directory is stable across
-//      reinstalls, the plugin root is not, so the shim is the path to hand to an
-//      agent or to put on PATH.
-//   3. A PostToolUse hook on TodoWrite is added to Claude Code's user settings.
-//      That is the whole Claude Code integration: no prompt, no skill, no
-//      instructions for the agent to follow.
-//   4. The herdr-tasks skill is copied into the user's skill directories, with
-//      the shim's real path substituted in, so an agent that is not Claude Code
-//      can find the CLI without being told about it in every project.
+//   1. A `herdr-tasks` shim in HERDR_PLUGIN_CONFIG_DIR, with this checkout's
+//      paths baked in. The config directory is stable across reinstalls, the
+//      plugin root is not, so the shim is the path to hand to an agent or to put
+//      on PATH. config.toml is seeded into the same directory, never overwritten.
+//   2. The herdr-tasks skill, copied into the user's skill directories with the
+//      shim's real path substituted in. That is how an agent finds the CLI
+//      without being told about it in every project.
 //
-//   --apply      (default) do all three
-//   --uninstall  remove the hook and the shim, keep config.toml and state
-//   --repair     re-point an existing hook and shim at this checkout, and do
-//                nothing at all if the hook was never installed. This is what
-//                the startup hook runs, so a reinstall into a new managed
-//                directory fixes itself.
+//   --apply      (default) do both
+//   --uninstall  remove the skill and the shim, keep config.toml and state
+//   --repair     re-point an installed shim and skill at this checkout, and do
+//                nothing when nothing is installed. This is what the startup hook
+//                runs, so a reinstall into a new managed directory fixes itself.
 //
-// Claude Code's settings file is merged, never rewritten: the previous contents
-// are copied to settings.json.herdr-tasks.bak, every unrelated hook is kept, and
-// our own entry is recognised by the --herdr-tasks-hook marker rather than by
-// guessing at paths. The installed skill directory is marked the same way, with a
-// STAMP file, so removal can never delete a skill the user wrote themselves.
+// Installed skill directories are marked with a STAMP file, so removal can never
+// delete a skill the user wrote themselves.
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -37,9 +29,6 @@ const path = require('node:path');
 
 const paths = require('../lib/paths');
 
-const MARKER = '--herdr-tasks-hook';
-const EVENT = 'PostToolUse';
-const TOOL = 'TodoWrite';
 const SKILL = 'herdr-tasks';
 const STAMP = '.installed-by-herdr-tasks';
 
@@ -56,98 +45,6 @@ const marked = (file) => path.join(configDir, file);
 process.stdout.on('error', () => {});
 
 const log = (line) => process.stdout.write(`${line}\n`);
-
-// --- Claude Code settings ----------------------------------------------------
-
-function settingsPath() {
-  const explicit = paths.fromArgv(process.argv, '--settings');
-  if (explicit) return explicit;
-  const base = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-  return path.join(base, 'settings.json');
-}
-
-function hookCommand() {
-  // An argv-style command with absolute paths: no shell quoting, no cwd
-  // assumption, and nothing that depends on Herdr's environment being present.
-  return [
-    JSON.stringify(process.execPath),
-    JSON.stringify(path.join(root, 'bin', 'hook.js')),
-    MARKER,
-    '--state-dir',
-    JSON.stringify(stateDir),
-  ].join(' ');
-}
-
-function isOurs(entry) {
-  return !!entry && typeof entry.command === 'string' && entry.command.includes(MARKER);
-}
-
-function writeSettings(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.herdr-tasks.bak`);
-  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-}
-
-function loadSettings(file) {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return {};
-    throw new Error(`${file} is not readable JSON; fix or move it, then run this again`);
-  }
-}
-
-function installHook({ onlyIfPresent }) {
-  const file = settingsPath();
-  const settings = loadSettings(file);
-  const hooks = (settings.hooks = settings.hooks || {});
-  const matchers = (hooks[EVENT] = Array.isArray(hooks[EVENT]) ? hooks[EVENT] : []);
-
-  const present = matchers.some((m) => (m.hooks || []).some(isOurs));
-  if (onlyIfPresent && !present) return false;
-
-  let matcher = matchers.find((m) => m && m.matcher === TOOL);
-  if (!matcher) {
-    matcher = { matcher: TOOL, hooks: [] };
-    matchers.push(matcher);
-  }
-  matcher.hooks = Array.isArray(matcher.hooks) ? matcher.hooks : [];
-
-  const entry = { type: 'command', command: hookCommand(), timeout: 5 };
-  const mine = matcher.hooks.findIndex(isOurs);
-  if (mine >= 0) matcher.hooks[mine] = entry;
-  else matcher.hooks.push(entry);
-
-  // A stale copy can sit under a different matcher after a hand edit.
-  for (const m of matchers) {
-    if (m === matcher) continue;
-    m.hooks = (m.hooks || []).filter((h) => !isOurs(h));
-  }
-  hooks[EVENT] = matchers.filter((m) => (m.hooks || []).length);
-
-  writeSettings(file, settings);
-  return true;
-}
-
-function removeHook() {
-  const file = settingsPath();
-  if (!fs.existsSync(file)) return false;
-  const settings = loadSettings(file);
-  const matchers = settings.hooks && Array.isArray(settings.hooks[EVENT]) ? settings.hooks[EVENT] : [];
-  let removed = false;
-  for (const m of matchers) {
-    const before = (m.hooks || []).length;
-    m.hooks = (m.hooks || []).filter((h) => !isOurs(h));
-    if (m.hooks.length !== before) removed = true;
-  }
-  if (!removed) return false;
-  settings.hooks[EVENT] = matchers.filter((m) => (m.hooks || []).length);
-  if (!settings.hooks[EVENT].length) delete settings.hooks[EVENT];
-  if (!Object.keys(settings.hooks).length) delete settings.hooks;
-  writeSettings(file, settings);
-  return true;
-}
 
 // --- The CLI shim ------------------------------------------------------------
 
@@ -184,6 +81,10 @@ function removeShim() {
       /* not there */
     }
   }
+}
+
+function shimInstalled() {
+  return fs.existsSync(marked('herdr-tasks'));
 }
 
 // --- The agent skill --------------------------------------------------------
@@ -260,25 +161,22 @@ function seedConfig() {
 
 try {
   if (mode === 'uninstall') {
-    log(removeHook() ? 'Removed the Claude Code TodoWrite hook.' : 'No Claude Code hook was installed.');
     const gone = removeSkill();
-    if (gone.length) log(`Removed the skill from ${gone.join(' and ')}`);
+    log(gone.length ? `Removed the skill from ${gone.join(' and ')}` : 'No skill was installed by this plugin.');
     removeShim();
     log(`Removed the herdr-tasks shim. config.toml and saved lists are untouched in ${configDir}`);
   } else if (mode === 'repair') {
-    if (installHook({ onlyIfPresent: true })) {
+    // Silent by default: this runs on every server start.
+    if (shimInstalled()) {
       installShim();
       installSkill({ onlyIfPresent: true });
-      log('Re-pointed the Claude Code hook, the shim and the skill at this checkout.');
+      log('Re-pointed the shim and the skill at this checkout.');
     }
-    // Nothing installed: stay silent, this runs on every server start.
   } else {
     const seeded = seedConfig();
     const shim = installShim();
-    installHook({ onlyIfPresent: false });
     const skills = installSkill({ onlyIfPresent: false });
-    log(`Claude Code hook installed in ${settingsPath()}`);
-    log(`CLI for other agents: ${shim}`);
+    log(`CLI for your agents: ${shim}`);
     log(skills.length ? `Skill installed in ${skills.join(' and ')}` : 'No skill directory found, so the skill was not installed.');
     log(seeded ? `Config seeded at ${marked('config.toml')}` : `Config kept at ${marked('config.toml')}`);
     log('');
@@ -291,7 +189,6 @@ try {
     log('  description = "toggle the task list pane"');
     log('');
     log('Then reload with: herdr server reload-config');
-    log('Restart Claude Code (or start a new session) for the hook to load.');
   }
 } catch (err) {
   process.stderr.write(`herdr-tasks configure: ${err.message}\n`);
