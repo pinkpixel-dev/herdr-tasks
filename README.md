@@ -6,26 +6,9 @@ Agents already plan their work, and most will write the plan down if you ask. Th
 
 Press one key, the list appears next to the agent. Press it again, the list goes away.
 
-```
-Tasks  claude · w6:p4                           2/6
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+![The Tasks pane showing a six item list. Five are checked off, three of them with their own indented subtasks, and the sixth is in progress and highlighted.](screenshot.png)
 
- 1 ✔  Read the Herdr plugin skill references
- 2 ✔  Inspect the file viewer plugin for the toggle pattern
- 3 ▸  Writing the manifest, pane renderer and toggle launcher
-      ✔ the manifest
-      ▸ the pane renderer
-      ○ the toggle launcher
- 4 ○  Wire the agent skill into setup
- 5 ⊘  Waiting on review
-      ↳ blocked on the API key
- 6 ○  Write the README
-
-q quit · j/k scroll · g top
-```
-
-A step that breaks into pieces can carry subtasks, one level deep, like task 3 above. The count in
-the header stays on tasks, so a step with six subtasks is still one step of six.
+A step that breaks into pieces can carry subtasks, one level deep, like tasks 2, 3 and 4 above. The count in the header stays on tasks, so a step with six subtasks is still one step of six. A step that cannot go forward gets marked blocked instead, and the agent's reason for it appears under the task.
 
 ## How it gets the tasks
 
